@@ -1,4 +1,4 @@
-from checks import check_s3_public_access
+from checks import check_s3_public_access, check_open_security_groups
 
 def generate_report(all_findings):
     """Generates and prints a report from all findings."""
@@ -19,8 +19,9 @@ def main():
     """Main function to run all security checks."""
     all_findings = []
     
-    # We will add more checks here in the future
+    # Run all the checks we've defined
     all_findings.extend(check_s3_public_access())
+    all_findings.extend(check_open_security_groups()) # Add the new check
     
     # Generate the final report
     generate_report(all_findings)
