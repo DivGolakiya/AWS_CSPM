@@ -3,18 +3,25 @@ from botocore.exceptions import ClientError
 from datetime import datetime, timezone, timedelta
 
 def get_boto_client(service_name, aws_access_key_id=None, aws_secret_access_key=None, region_name=None):
-    """Creates a boto3 client, using provided credentials and region if available."""
+    """
+    Creates a boto3 client, using provided credentials and region if available.
+    Defaults to 'us-east-1' if no region is specified, which is crucial for cloud environments.
+    """
+    # Use 'us-east-1' as a fallback if no region is provided
+    effective_region = region_name if region_name else 'us-east-1'
+
     if aws_access_key_id and aws_secret_access_key:
         return boto3.client(
             service_name,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
-            region_name=region_name
+            region_name=effective_region
         )
-    return boto3.client(service_name, region_name=region_name)
+    return boto3.client(service_name, region_name=effective_region)
 
 def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
     if not quiet: print("[*] Checking for publicly accessible S3 buckets...")
+    # S3 is global, so region doesn't strictly matter, but it's good practice
     s3_client = get_boto_client('s3', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -30,16 +37,17 @@ def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, q
             except ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
                     try:
+                        # For buckets without a PublicAccessBlock, we need to check the ACL
                         acl = s3_client.get_bucket_acl(Bucket=bucket_name)
                         for grant in acl['Grants']:
                             if 'AllUsers' in grant.get('Grantee', {}).get('URI', '') or 'AuthenticatedUsers' in grant.get('Grantee', {}).get('URI', ''):
                                 is_public = True; break
-                    except ClientError: pass
+                    except ClientError: pass # Ignore buckets where we can't get ACL
             if is_public:
                 findings.append({ "resource": bucket_name, "finding": "S3 Bucket is potentially public.", "recommendation": "Enable all 'Block public access' settings."})
     except ClientError as e:
         if not quiet: print(f"  [!] Error connecting to AWS S3: {e}.")
-        return [{"resource": "S3 Service", "finding": f"Could not access S3 buckets. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have s3:ListBuckets permission."}]
+        return [{"resource": "S3 Service", "finding": f"Could not access S3 buckets. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have s3:ListBuckets and s3:GetBucketAcl permissions."}]
     if not quiet:
         print(f"  [+] S3 check complete. Found {len(findings)} potential issues.")
     return findings
@@ -50,6 +58,7 @@ def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=Non
     sensitive_ports = [22, 3389]
     if not regions_to_scan:
         try:
+            # This initial client will now correctly use 'us-east-1' by default
             ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
             regions_to_scan = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
         except ClientError as e:
@@ -78,6 +87,7 @@ def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=Non
     
 def check_root_mfa(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
     if not quiet: print("[*] Checking for MFA on root account...")
+    # IAM is global, but the client still benefits from a default region
     iam_client = get_boto_client('iam', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -135,7 +145,10 @@ def check_cloudtrail_enabled(aws_access_key_id=None, aws_secret_access_key=None,
         active_multi_region_trail = False
         for trail in response['trailList']:
             if trail.get('IsMultiRegionTrail'):
-                trail_status = cloudtrail_client.get_trail_status(Name=trail['TrailARN'])
+                # We need to specify the region of the trail to check its status
+                trail_region = trail['HomeRegion']
+                regional_cloudtrail = get_boto_client('cloudtrail', aws_access_key_id, aws_secret_access_key, region_name=trail_region)
+                trail_status = regional_cloudtrail.get_trail_status(Name=trail['TrailARN'])
                 if trail_status.get('IsLogging'):
                     active_multi_region_trail = True
                     break
