@@ -1,6 +1,6 @@
 import streamlit as st
-import boto3
 from checks import (
+    validate_credentials, get_available_regions,
     check_s3_public_access, 
     check_open_security_groups, 
     check_root_mfa,
@@ -10,7 +10,6 @@ from checks import (
     check_publicly_accessible_rds
 )
 
-# A dictionary containing descriptions for each check
 CHECK_DESCRIPTIONS = {
     "S3 Public Access": {
         "description": "This check scans all S3 buckets to determine if any are configured to allow public access. Publicly accessible buckets can lead to unintentional data exposure and are a common source of data breaches.",
@@ -43,94 +42,99 @@ CHECK_DESCRIPTIONS = {
 }
 
 def run_all_checks(aws_access_key_id, aws_secret_access_key, scan_type, region):
-    """Runs all security checks using the provided credentials and scan type."""
     scan_results = []
+    regions_to_scan = [region] if scan_type == 'quick' else None
     
-    regions_to_scan = None
-    if scan_type == 'quick':
-        regions_to_scan = [region]
-
-    non_regional_checks = [
+    check_functions = [
         ("S3 Public Access", check_s3_public_access),
         ("Root Account MFA", check_root_mfa),
         ("Inactive IAM Keys", check_inactive_iam_keys),
         ("CloudTrail Enabled", check_cloudtrail_enabled),
         ("IAM Password Policy", check_iam_password_policy)
     ]
-    regional_checks = [
+    regional_check_functions = [
         ("Open Security Groups", check_open_security_groups),
         ("Publicly Accessible RDS", check_publicly_accessible_rds)
     ]
 
-    for check_name, check_function in non_regional_checks:
-        findings = check_function(aws_access_key_id, aws_secret_access_key, quiet=True)
-        scan_results.append({"check_name": check_name, "findings": findings})
+    for name, func in check_functions:
+        findings = func(aws_access_key_id, aws_secret_access_key, quiet=True)
+        scan_results.append({"check_name": name, "findings": findings})
         
-    for check_name, check_function in regional_checks:
-        findings = check_function(aws_access_key_id, aws_secret_access_key, regions_to_scan=regions_to_scan, quiet=True)
-        scan_results.append({"check_name": check_name, "findings": findings})
+    for name, func in regional_check_functions:
+        findings = func(aws_access_key_id, aws_secret_access_key, regions_to_scan=regions_to_scan, quiet=True)
+        scan_results.append({"check_name": name, "findings": findings})
 
     return scan_results
 
 def main():
     st.set_page_config(page_title="AWS CSPM Scanner", page_icon="🛡️", layout="wide")
-    
     st.title("🛡️ AWS Cloud Security Posture Manager")
     st.write("This tool scans an AWS account for common security misconfigurations.")
 
     st.subheader("Enter AWS Credentials")
-    st.warning(
-        "**Security Warning:** Your credentials are used only for this session to run read-only checks and are not stored. Provide keys for an IAM user with `ReadOnlyAccess` and `iam:GetAccountSummary` permissions. Never use your root credentials.", 
-        icon="⚠️"
-    )
+    st.warning("**Security Note:** Provide keys for an IAM user with `ReadOnlyAccess`, `iam:GetAccountSummary`, and `ec2:DescribeRegions` permissions.", icon="⚠️")
     aws_access_key_id = st.text_input("AWS Access Key ID", type="password")
     aws_secret_access_key = st.text_input("AWS Secret Access Key", type="password")
 
     st.subheader("Select Scan Options")
-    scan_type_option = st.radio("Scan Type", ["Quick Scan (Single Region)", "Full Scan (All Regions)"], index=0)
+    scan_type_option = st.radio("Scan Type", ["Quick Scan (Single Region)", "Full Scan (All Regions)"])
     
     region = None
     if "Quick Scan" in scan_type_option:
         scan_type = 'quick'
-        region = st.text_input("AWS Region", "us-east-1", help="Specify the single AWS region to scan for regional resources like EC2 and RDS.")
+        region = st.text_input("AWS Region", "us-east-1")
     else:
         scan_type = 'full'
-        st.info("A full scan is more thorough but may take several minutes to complete.", icon="ℹ️")
+        st.info("A full scan is more thorough and may take several minutes to complete.", icon="ℹ️")
 
     if st.button("Run Security Scan", type="primary"):
         if not aws_access_key_id or not aws_secret_access_key:
             st.error("Please provide both an Access Key ID and a Secret Access Key.")
+            return
+
+        # --- PRE-FLIGHT VALIDATION ---
+        is_valid, error_message = validate_credentials(aws_access_key_id, aws_secret_access_key)
+        if not is_valid:
+            st.error(f"Credential Validation Failed: {error_message}")
+            return
+            
+        if scan_type == 'quick':
+            available_regions = get_available_regions(aws_access_key_id, aws_secret_access_key)
+            if region not in available_regions:
+                st.error(f"Region Validation Failed: '{region}' is not a valid or enabled region for this account.")
+                return
+
+        with st.spinner("Scanning AWS environment... This may take a moment."):
+            scan_results = run_all_checks(aws_access_key_id, aws_secret_access_key, scan_type, region)
+
+        st.divider()
+        st.header("Scan Report")
+        total_findings = sum(len(result['findings']) for result in scan_results)
+
+        if total_findings == 0:
+            st.success("✅ No security issues found!")
         else:
-            with st.spinner("Scanning AWS environment... This may take a moment."):
-                scan_results = run_all_checks(aws_access_key_id, aws_secret_access_key, scan_type, region)
+            st.error(f"🚨 Found {total_findings} potential security issues.")
 
-            st.divider()
-            st.header("Scan Report")
-            total_findings = sum(len(result['findings']) for result in scan_results)
-
-            if total_findings == 0:
-                st.success("✅ No security issues found. Your AWS posture looks good!")
+        for result in scan_results:
+            check_name = result['check_name']
+            findings = result['findings']
+            description_info = CHECK_DESCRIPTIONS.get(check_name, {})
+            
+            if not findings:
+                with st.expander(f"✅ **{check_name}:** Pass", expanded=False):
+                    st.write(f"**Description:** {description_info.get('description')}")
+                    st.success("No issues found for this check.")
             else:
-                st.error(f"🚨 Found {total_findings} potential security issues.")
-
-            for result in scan_results:
-                check_name = result['check_name']
-                findings = result['findings']
-                description_info = CHECK_DESCRIPTIONS.get(check_name, {})
-                
-                if not findings:
-                    with st.expander(f"✅ **{check_name}:** Pass", expanded=False):
-                        st.write(f"**Description:** {description_info.get('description', 'No description available.')}")
-                        st.success("No issues found for this check.")
-                else:
-                    with st.expander(f"🚨 **{check_name}:** Fail ({len(findings)} issues found)", expanded=True):
-                        st.write(f"**Description:** {description_info.get('description', 'No description available.')}")
+                with st.expander(f"🚨 **{check_name}:** Fail ({len(findings)} found)", expanded=True):
+                    st.write(f"**Description:** {description_info.get('description')}")
+                    st.write("---")
+                    for finding in findings:
+                        st.write(f"**Finding:** {finding['finding']}")
+                        st.write(f"**Resource:** `{finding['resource']}`")
+                        st.write(f"**Recommendation:** {finding['recommendation']}")
                         st.write("---")
-                        for finding in findings:
-                            st.write(f"**Finding:** {finding['finding']}")
-                            st.write(f"**Resource:** `{finding['resource']}`")
-                            st.write(f"**Recommendation:** {finding['recommendation']}")
-                            st.write("---")
 
 if __name__ == "__main__":
     main()
