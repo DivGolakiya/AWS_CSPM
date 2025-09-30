@@ -34,22 +34,19 @@ def main():
 
     all_findings = []
     
-    # Determine regions to scan based on user input
-    regions_to_scan = None # Full scan by default
+    regions_to_scan = None
     if args.scan_type == 'quick':
         regions_to_scan = [args.region]
         print(f"[*] Starting Quick Scan on region: {args.region}...")
     else:
         print("[*] Starting Full Scan across all regions...")
 
-    # Non-regional checks
     all_findings.extend(check_s3_public_access())
     all_findings.extend(check_root_mfa())
     all_findings.extend(check_inactive_iam_keys())
     all_findings.extend(check_cloudtrail_enabled())
     all_findings.extend(check_iam_password_policy())
     
-    # Regional checks
     all_findings.extend(check_open_security_groups(regions_to_scan=regions_to_scan))
     all_findings.extend(check_publicly_accessible_rds(regions_to_scan=regions_to_scan))
     

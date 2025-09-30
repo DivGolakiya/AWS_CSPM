@@ -13,7 +13,6 @@ def get_boto_client(service_name, aws_access_key_id=None, aws_secret_access_key=
         )
     return boto3.client(service_name, region_name=region_name)
 
-# ... (check_s3_public_access, check_root_mfa, check_inactive_iam_keys, check_cloudtrail_enabled, check_iam_password_policy remain the same) ...
 def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
     if not quiet: print("[*] Checking for publicly accessible S3 buckets...")
     s3_client = get_boto_client('s3', aws_access_key_id, aws_secret_access_key)
@@ -46,12 +45,10 @@ def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, q
     return findings
 
 def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=None, regions_to_scan=None, quiet=False):
-    """Scans EC2 security groups in specified regions for open sensitive ports."""
-    if not quiet:
-        print("[*] Checking for open security groups on sensitive ports...")
+    if not quiet: print("[*] Checking for open security groups on sensitive ports...")
     findings = []
     sensitive_ports = [22, 3389]
-    if not regions_to_scan: # If no regions are provided, scan all
+    if not regions_to_scan:
         try:
             ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
             regions_to_scan = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
@@ -80,8 +77,7 @@ def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=Non
     return findings
     
 def check_root_mfa(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    if not quiet:
-        print("[*] Checking for MFA on root account...")
+    if not quiet: print("[*] Checking for MFA on root account...")
     iam_client = get_boto_client('iam', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -100,8 +96,7 @@ def check_root_mfa(aws_access_key_id=None, aws_secret_access_key=None, quiet=Fal
     return findings
 
 def check_inactive_iam_keys(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    if not quiet:
-        print("[*] Checking for inactive IAM access keys...")
+    if not quiet: print("[*] Checking for inactive IAM access keys...")
     iam_client = get_boto_client('iam', aws_access_key_id, aws_secret_access_key)
     findings = []
     ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
@@ -132,8 +127,7 @@ def check_inactive_iam_keys(aws_access_key_id=None, aws_secret_access_key=None, 
     return findings
 
 def check_cloudtrail_enabled(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    if not quiet:
-        print("[*] Checking for CloudTrail logging...")
+    if not quiet: print("[*] Checking for CloudTrail logging...")
     cloudtrail_client = get_boto_client('cloudtrail', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -155,8 +149,7 @@ def check_cloudtrail_enabled(aws_access_key_id=None, aws_secret_access_key=None,
     return findings
 
 def check_iam_password_policy(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    if not quiet:
-        print("[*] Checking IAM password policy...")
+    if not quiet: print("[*] Checking IAM password policy...")
     iam_client = get_boto_client('iam', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -172,11 +165,9 @@ def check_iam_password_policy(aws_access_key_id=None, aws_secret_access_key=None
     return findings
     
 def check_publicly_accessible_rds(aws_access_key_id=None, aws_secret_access_key=None, regions_to_scan=None, quiet=False):
-    """Scans RDS instances in specified regions for public accessibility."""
-    if not quiet:
-        print("[*] Checking for publicly accessible RDS instances...")
+    if not quiet: print("[*] Checking for publicly accessible RDS instances...")
     findings = []
-    if not regions_to_scan: # If no regions are provided, scan all
+    if not regions_to_scan:
         try:
             ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
             regions_to_scan = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
