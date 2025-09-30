@@ -55,7 +55,7 @@ The project includes two interfaces:
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
+git clone github.com/DivGolakiya/AWS_CSPM/
 cd AWS_CSPM
 ```
 
