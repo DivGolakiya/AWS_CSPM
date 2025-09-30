@@ -13,11 +13,9 @@ def get_boto_client(service_name, aws_access_key_id=None, aws_secret_access_key=
         )
     return boto3.client(service_name, region_name=region_name)
 
+# ... (check_s3_public_access, check_root_mfa, check_inactive_iam_keys, check_cloudtrail_enabled, check_iam_password_policy remain the same) ...
 def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    """Scans S3 buckets for public access."""
-    if not quiet:
-        print("[*] Checking for publicly accessible S3 buckets...")
-    
+    if not quiet: print("[*] Checking for publicly accessible S3 buckets...")
     s3_client = get_boto_client('s3', aws_access_key_id, aws_secret_access_key)
     findings = []
     try:
@@ -47,17 +45,22 @@ def check_s3_public_access(aws_access_key_id=None, aws_secret_access_key=None, q
         print(f"  [+] S3 check complete. Found {len(findings)} potential issues.")
     return findings
 
-def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    """Scans EC2 security groups for open sensitive ports."""
+def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=None, regions_to_scan=None, quiet=False):
+    """Scans EC2 security groups in specified regions for open sensitive ports."""
     if not quiet:
         print("[*] Checking for open security groups on sensitive ports...")
-    # This initial client is just to get the list of regions
-    ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
     findings = []
     sensitive_ports = [22, 3389]
-    try:
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-        for region in regions:
+    if not regions_to_scan: # If no regions are provided, scan all
+        try:
+            ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
+            regions_to_scan = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+        except ClientError as e:
+            if not quiet: print(f"  [!] Error listing AWS regions: {e}.")
+            return [{"resource": "EC2 Service", "finding": f"Could not list regions. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have ec2:DescribeRegions permission."}]
+
+    for region in regions_to_scan:
+        try:
             regional_ec2 = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key, region_name=region)
             response = regional_ec2.describe_security_groups()
             for group in response['SecurityGroups']:
@@ -69,15 +72,14 @@ def check_open_security_groups(aws_access_key_id=None, aws_secret_access_key=Non
                                 for port in range(from_port, to_port + 1):
                                     if port in sensitive_ports:
                                         findings.append({"resource": f"{group['GroupId']} (Region: {region}, Port {port})", "finding": "Security group has a sensitive port open to the internet.", "recommendation": "Restrict the inbound rule to a specific IP range."}); break
-    except ClientError as e:
-        if not quiet: print(f"  [!] Error connecting to AWS EC2: {e}.")
-        return [{"resource": "EC2 Service", "finding": f"Could not access EC2 security groups. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have ec2:DescribeSecurityGroups permission."}]
+        except ClientError:
+            if not quiet: print(f"  [!] Warning: Could not scan region {region}. It may be disabled.")
+            continue
     if not quiet:
         print(f"  [+] Security group check complete. Found {len(findings)} potential issues.")
     return findings
-
+    
 def check_root_mfa(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
-    """Checks if the root user has MFA enabled."""
     if not quiet:
         print("[*] Checking for MFA on root account...")
     iam_client = get_boto_client('iam', aws_access_key_id, aws_secret_access_key)
@@ -168,24 +170,30 @@ def check_iam_password_policy(aws_access_key_id=None, aws_secret_access_key=None
     if not quiet:
         print(f"  [+] IAM password policy check complete. Found {len(findings)} potential issues.")
     return findings
-
-def check_publicly_accessible_rds(aws_access_key_id=None, aws_secret_access_key=None, quiet=False):
+    
+def check_publicly_accessible_rds(aws_access_key_id=None, aws_secret_access_key=None, regions_to_scan=None, quiet=False):
+    """Scans RDS instances in specified regions for public accessibility."""
     if not quiet:
         print("[*] Checking for publicly accessible RDS instances...")
-    # This initial client is just to get the list of regions
-    ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
     findings = []
-    try:
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-        for region in regions:
+    if not regions_to_scan: # If no regions are provided, scan all
+        try:
+            ec2_client = get_boto_client('ec2', aws_access_key_id, aws_secret_access_key)
+            regions_to_scan = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+        except ClientError as e:
+            if not quiet: print(f"  [!] Error listing AWS regions: {e}.")
+            return [{"resource": "EC2 Service", "finding": f"Could not list regions. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have ec2:DescribeRegions permission."}]
+
+    for region in regions_to_scan:
+        try:
             rds_client = get_boto_client('rds', aws_access_key_id, aws_secret_access_key, region_name=region)
             response = rds_client.describe_db_instances()
             for instance in response['DBInstances']:
                 if instance.get('PubliclyAccessible'):
                     findings.append({"resource": f"{instance['DBInstanceIdentifier']} (Region: {region})", "finding": "RDS instance is publicly accessible.", "recommendation": "Set 'PubliclyAccessible' to false and ensure the database is in a private subnet."})
-    except ClientError as e:
-        if not quiet: print(f"  [!] Error connecting to AWS RDS: {e}.")
-        return [{"resource": "RDS Service", "finding": f"Could not access RDS instances. Error: {e.response['Error']['Code']}", "recommendation": "Ensure credentials have rds:DescribeDBInstances permission."}]
+        except ClientError:
+            if not quiet: print(f"  [!] Warning: Could not scan region {region}. It may be disabled.")
+            continue
     if not quiet:
         print(f"  [+] Public RDS check complete. Found {len(findings)} potential issues.")
     return findings
