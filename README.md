@@ -4,6 +4,10 @@ A Python-based tool designed to automatically scan an AWS account for common sec
 ---
 ## Demo
 
+![AWS_CSPM 1](Screenshot_1.png)
+![AWS_CSPM Screenshot 2](Screenshot_2.png)
+![AWS_CSPM Screenshot 3](Screenshot_3.png)
+
 ---
 ## Key Features & Security Checks
 This tool scans for a variety of critical security misconfigurations across your AWS environment:
